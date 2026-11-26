@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>RecipeReveal</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GameDir Condition="'$(GameDir)' == ''">D:\Games\Cairn\Cairn</GameDir>
+  </PropertyGroup>
+
+  <!-- v0.1 finds the game's classes by name at runtime, so it only needs BepInEx itself.
+       Once BepInEx has generated BepInEx\interop, later versions can reference it directly. -->
+  <ItemGroup>
+    <Reference Include="$(GameDir)\BepInEx\core\*.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
+    <MakeDir Directories="$(GameDir)\BepInEx\plugins\RecipeReveal" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\RecipeReveal" />
+  </Target>
+
+</Project>
