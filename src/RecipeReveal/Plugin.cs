@@ -3,14 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppInterop.Common.XrefScans;
-using Il2CppInterop.Runtime.XrefScans;
 
 namespace RecipeReveal;
 
@@ -21,28 +18,26 @@ namespace RecipeReveal;
 [BepInPlugin("schuah.cairn.recipereveal", "RecipeReveal", Version)]
 public class Plugin : BasePlugin
 {
-    public const string Version = "0.1.0";
+    public const string Version = "0.2.1";
 
     internal static new ManualLogSource Log;
     internal static ConfigEntry<bool> Enabled;
 
-    // Methods that answer "does the player know this recipe?"
-    static readonly HashSet<string> KnownChecks = new() { "IsRecipeKnown", "get_RecipeKnown" };
+    // The method that answers "does the player know this recipe?". The journal's
+    // get_RecipeKnown getter is left alone: IL2CPP folds tiny getters and lambdas into one
+    // shared native body, so hooking one hooks many unrelated ones (that crashed v0.1/v0.2).
+    // Only large, unique methods are patched here.
+    static readonly HashSet<string> KnownChecks = new() { "IsRecipeKnown" };
 
-    // While any of these runs, the real answer is returned (they record or count discoveries,
-    // or read/write the save).
-    static readonly HashSet<string> RealExact = new()
+    // While any of these runs, the real answer is returned: they record discoveries,
+    // cook, or read/write the recipe save. Keyed by the game's full type name.
+    static readonly Dictionary<string, string[]> RealGuards = new()
     {
-        "Cook", "CookInternal", "OnCook", "CookWithItemAction", "OnCookWithItemAction", "OnCookingAction",
-        "CookForFasterSimulation", "AnimateCooking", "DeclareRecipeKnown", "InventRecipe",
-        "PopupCookingResult", "OnPopupCookingResult", "EatCookingResult", "OnEatCookingResult",
-        "OnStoreCookingResult", "LoadRecipes", "ReadRecipes", "get_KnowsEveryRecipe", "get_KnowsHalfOfAllRecipes",
+        ["TheGameBakers.Cairn.InventoryManager"] = new[] { "DeclareRecipeKnown", "InventRecipe", "ReadRecipes", "WriteRecipes" },
+        ["TheGameBakers.Cairn.UI.CookingSubmenu"] = new[] { "OnClickedCooking", "CookInternal" },
+        ["TheGameBakers.Cairn.UI.CookingSubmenu+_AnimateCooking_d__48"] = new[] { "MoveNext" },
+        ["CookingSuccessPopup"] = new[] { "Display" },
     };
-    static readonly string[] RealWords =
-        { "Save", "Load", "Read", "Write", "Serializ", "Achievement", "Trophy", "Stat", "Knows", "Declare", "Invent", "Unlock" };
-
-    // Interesting names to map in the xref dump.
-    static readonly string[] DumpWords = { "Recipe", "Cookpot", "Cooking", "Cook" };
 
     [ThreadStatic] internal static int RealDepth;
     internal static int CallLogBudget = 200;
@@ -57,7 +52,6 @@ public class Plugin : BasePlugin
         Log.LogInfo($"Scanning {types.Count} game types");
 
         var harmony = new Harmony("schuah.cairn.recipereveal");
-        var dump = new StringBuilder();
         int checks = 0, guards = 0;
 
         foreach (var t in types)
@@ -72,9 +66,6 @@ public class Plugin : BasePlugin
                 string n = m.Name;
                 if (n.StartsWith("NativeMethodInfoPtr") || n.StartsWith("NativeFieldInfoPtr")) continue;
 
-                bool interesting = DumpWords.Any(w => n.Contains(w) || t.Name.Contains(w));
-                if (interesting) DumpXrefs(dump, t, m);
-
                 try
                 {
                     if (KnownChecks.Contains(n) && m.ReturnType == typeof(bool))
@@ -87,6 +78,7 @@ public class Plugin : BasePlugin
                     {
                         harmony.Patch(m, prefix: new HarmonyMethod(typeof(Plugin), nameof(EnterReal)),
                             postfix: new HarmonyMethod(typeof(Plugin), nameof(ExitReal)));
+                        Log.LogInfo($"Guard on {Sig(t, m)}");
                         guards++;
                     }
                 }
@@ -94,30 +86,12 @@ public class Plugin : BasePlugin
             }
         }
 
-        try
-        {
-            string path = Path.Combine(Path.GetDirectoryName(typeof(Plugin).Assembly.Location), "recipe-xrefs.txt");
-            File.WriteAllText(path, dump.ToString());
-            Log.LogInfo($"Wrote cooking code map to {path}");
-        }
-        catch (Exception e) { Log.LogWarning("Could not write xref dump: " + e.Message); }
-
         Log.LogInfo($"RecipeReveal {Version} loaded: {checks} known-recipe checks patched, {guards} guarded methods. Enabled={Enabled.Value}");
         if (checks == 0) Log.LogError("No IsRecipeKnown method found; nothing will be revealed.");
     }
 
-    // Only guard methods that sit in cooking/recipe code, so unrelated save code isn't slowed.
-    static bool IsRealGuard(Type t, MethodInfo m)
-    {
-        string n = m.Name;
-        bool cookingType = DumpWords.Any(w => t.FullName.Contains(w)) || t.FullName.Contains("Inventory") || t.FullName.Contains("Journal");
-        if (RealExact.Contains(n)) return true;
-        if (!cookingType && !n.Contains("Recipe")) return false;
-        if (RealWords.Any(w => n.Contains(w))) return true;
-        // Coroutine bodies of the exact methods above, e.g. _CookInternal_d__12.MoveNext
-        if (n == "MoveNext" && RealExact.Any(x => t.Name.Contains("_" + x + "_d__"))) return true;
-        return false;
-    }
+    static bool IsRealGuard(Type t, MethodInfo m) =>
+        RealGuards.TryGetValue(t.FullName ?? "", out var names) && names.Contains(m.Name);
 
     public static void EnterReal() => RealDepth++;
     public static void ExitReal() { if (RealDepth > 0) RealDepth--; }
@@ -151,30 +125,6 @@ public class Plugin : BasePlugin
             catch (ReflectionTypeLoadException e) { ts = e.Types.Where(x => x != null).ToArray(); }
             foreach (var t in ts) yield return t;
         }
-    }
-
-    static void DumpXrefs(StringBuilder sb, Type t, MethodInfo m)
-    {
-        sb.AppendLine(Sig(t, m));
-        try
-        {
-            foreach (var x in XrefScanner.XrefScan(m))
-            {
-                if (x.Type != XrefType.Method) continue;
-                var target = x.TryResolve();
-                if (target != null) sb.AppendLine("   calls   " + target.DeclaringType?.Name + "." + target.Name);
-            }
-        }
-        catch (Exception e) { sb.AppendLine("   (scan failed: " + e.Message + ")"); }
-        try
-        {
-            foreach (var x in XrefScanner.UsedBy(m))
-            {
-                var src = x.TryResolve();
-                if (src != null) sb.AppendLine("   usedby  " + src.DeclaringType?.Name + "." + src.Name);
-            }
-        }
-        catch { }
     }
 
     static string Sig(Type t, MethodInfo m) =>

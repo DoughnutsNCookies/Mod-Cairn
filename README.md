@@ -4,7 +4,7 @@ Cairn's cookpot normally shows a "?" for any mix you haven't cooked yet, so you 
 
 It doesn't add an overlay. It changes the game's answer to "does the player know this recipe?", so the game shows its usual preview art and names, and the journal works the same way.
 
-> **Status: v0.1, experimental.** It hasn't been tested in-game yet. It also writes a log and a map of the game's cooking code, which are used to fine-tune it.
+> **Status: v0.2, experimental.** It loads and the game runs. The cookpot preview hasn't been confirmed in-game yet.
 
 ## Your save is left alone
 
@@ -22,7 +22,13 @@ The mod needs **BepInEx 6 bleeding edge, IL2CPP x64** (tested with `6.0.0-be.793
 
 **Turn it off:** in the `BepInEx\config\schuah.cairn.recipereveal.cfg` file, set `RevealAllRecipes = false`. To turn off every BepInEx mod, rename `winhttp.dll` in the game folder to `winhttp.dll.off`.
 
-**Logs:** `BepInEx\LogOutput.log`. Lines from this mod start with `RecipeReveal`. A file called `recipe-xrefs.txt`, written next to the DLL, shows which of the game's cooking functions call which. Please attach both to any bug report.
+**Logs:** `BepInEx\LogOutput.log`. Lines from this mod start with `RecipeReveal`. Please attach it to any bug report.
+
+## How it works
+
+It patches one function, `InventoryManager.IsRecipeKnown`, to answer yes. A few large functions are guarded, and while they run the real answer comes back: `DeclareRecipeKnown`, `InventRecipe`, `ReadRecipes` and `WriteRecipes`, plus the cookpot's `OnClickedCooking`, `CookInternal` and cooking animation, and the success popup.
+
+Small getters and lambdas are never patched. IL2CPP merges identical small functions into one shared piece of native code, so hooking one of them hooks every function that shares it, and the game crashes at startup.
 
 ## Build
 
