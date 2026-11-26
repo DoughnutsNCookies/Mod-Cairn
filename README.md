@@ -8,7 +8,7 @@ It doesn't add an overlay. It changes the game's answer to "does the player know
 
 ## Your save is left alone
 
-The reveal applies only while the game is *displaying* recipes. While the game records a new discovery, cooks, saves or loads your recipe file, or checks recipe achievements, the mod gives the real answer. Your save keeps its true list of discovered recipes, and cooking something new should still count as a discovery.
+The reveal applies only while the game is *displaying* recipes. While the game records a new discovery, cooks, or saves or loads your recipe file, the mod gives the real answer. Your save keeps its true list of discovered recipes, and cooking something new should still count as a discovery.
 
 Back up your saves before trying it anyway. On Windows they are in `%USERPROFILE%\Saved Games\TheGameBakers\Cairn_RETAIL`.
 
