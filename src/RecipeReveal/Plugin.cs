@@ -18,7 +18,7 @@ namespace RecipeReveal;
 [BepInPlugin("schuah.cairn.recipereveal", "RecipeReveal", Version)]
 public class Plugin : BasePlugin
 {
-    public const string Version = "0.2.1";
+    public const string Version = "1.0.0";
 
     internal static new ManualLogSource Log;
     internal static ConfigEntry<bool> Enabled;
@@ -40,7 +40,8 @@ public class Plugin : BasePlugin
     };
 
     [ThreadStatic] internal static int RealDepth;
-    internal static int CallLogBudget = 200;
+    // Only the guarded (real-answer) cases are logged, and only a few, so the log stays small.
+    internal static int CallLogBudget = 20;
 
     public override void Load()
     {
@@ -101,7 +102,7 @@ public class Plugin : BasePlugin
         bool real = __result;
         bool reveal = Enabled.Value && RealDepth == 0;
         if (reveal) __result = true;
-        if (CallLogBudget > 0 && !real)
+        if (CallLogBudget > 0 && !real && !reveal)
         {
             CallLogBudget--;
             Log.LogInfo($"{__originalMethod?.DeclaringType?.Name}.{__originalMethod?.Name}: real=false -> {(reveal ? "revealed" : "kept (guarded)")}");
