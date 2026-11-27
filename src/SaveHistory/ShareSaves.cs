@@ -9,28 +9,32 @@ namespace SaveHistory;
 // so nothing else can copy it until you quit. This adds read sharing to the game's own
 // open of its save slot files (*.CPK under the save folder) and changes nothing else:
 // the game still has full write access, and every other file it opens is untouched.
-// Patched: the one FileStream constructor every path-based FileStream constructor
-// ends up in. It is large and unique, so it is safe to hook (unlike tiny getters).
+// Patched: StandaloneDiskModule.Open and SavegameManager.OnSaved, both large game
+// methods, so they are safe to hook (unlike tiny getters, which IL2CPP shares).
 static class ShareSaves
 {
     static int logged;
 
     public static void Install(Harmony harmony)
     {
-        var ctor = AccessTools.Constructor(typeof(FS.FileStream), new[]
-        {
-            typeof(string), typeof(FS.FileMode), typeof(FS.FileAccess), typeof(FS.FileShare),
-            typeof(int), typeof(bool), typeof(FS.FileOptions),
-        });
-        if (ctor != null) harmony.Patch(ctor, prefix: new HarmonyMethod(typeof(ShareSaves), nameof(Prefix)));
-
-        // The game's own open of save files. In 1.1.0 the constructor hook alone never fired
-        // (the call is compiled straight through), so this is the hook that matters.
+        // The game's own open of save files. (1.1.0 hooked the FileStream constructor instead;
+        // that never fired, so it was removed.)
         var open = AccessTools.Method(AccessTools.TypeByName("TheGameBakers.Cairn.IO.StandaloneDiskModule"), "Open",
             new[] { typeof(string), typeof(FS.FileMode), typeof(FS.FileAccess), typeof(int) });
         if (open == null) { Core.Warn("StandaloneDiskModule.Open not found; the slot you're playing is only copied after it closes."); return; }
         harmony.Patch(open, prefix: new HarmonyMethod(typeof(ShareSaves), nameof(OpenPrefix)));
         Core.Info("Save slot files will be opened with read sharing, so they can be copied during play.");
+
+        // Copy right when the game finishes each save, so saves seconds apart each get a copy.
+        var onSaved = AccessTools.Method(AccessTools.TypeByName("TheGameBakers.Cairn.Save.SavegameManager"), "OnSaved");
+        if (onSaved == null) { Core.Warn("SavegameManager.OnSaved not found; saves are copied by the 15-second check only."); return; }
+        harmony.Patch(onSaved, postfix: new HarmonyMethod(typeof(ShareSaves), nameof(OnSavedPostfix)));
+        Core.Info("Each save is copied as soon as the game finishes it.");
+    }
+
+    static void OnSavedPostfix(bool success)
+    {
+        if (success) Core.CaptureNow("save");
     }
 
     // Opens a save slot for writing exactly as asked, except that other programs may read it.
@@ -56,18 +60,5 @@ static class ShareSaves
         if (path == null || !path.EndsWith(".CPK", StringComparison.OrdinalIgnoreCase)) return false;
         string root = Core.SaveRoot;
         return root != null && Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase);
-    }
-
-    static void Prefix(string path, ref FS.FileShare share)
-    {
-        try
-        {
-            if (!IsSlot(path)) return;
-            if (logged < 10) Core.Info($"FileStream({Path.GetFileName(path)}, share={share})");
-            if ((share & FS.FileShare.Read) != 0) return;
-            share |= FS.FileShare.Read;
-            if (logged++ < 10) Core.Info($"Allowed reading {Path.GetFileName(path)} while the game has it open");
-        }
-        catch { }
     }
 }

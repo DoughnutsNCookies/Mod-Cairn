@@ -23,6 +23,7 @@ public static class Core
     const int RetryMs = 15000; // a file the game still holds locked is tried again this often
     const int PollMs = 15000;  // check for changes this often even without a change notice
     const int StableMs = 1500; // a changed file must read the same twice this far apart
+    const int FastStableMs = 300; // the same, right after the game says a save finished
     static Timer poll;
     static readonly HashSet<string> lockWarned = new(StringComparer.OrdinalIgnoreCase);
     public static string SaveRoot => saveRoot;
@@ -57,46 +58,87 @@ public static class Core
         Info($"Copying every save of {saveRoot} into {historyDir}");
     }
 
-    // Zips every save file that changed since the last copy. Unchanged files are skipped.
-    static void Snapshot(string reason)
+    // Called when the game reports a finished save. Runs off the game thread: the files are
+    // copied as soon as they read the same twice FastStableMs apart (the game may still be
+    // flushing for a moment), which is well before a next save can start.
+    public static void CaptureNow(string reason)
     {
-        lock (gate)
+        ThreadPool.QueueUserWorkItem(_ =>
         {
             try
             {
-                if (lastHash.Count == 0) LoadLastHashes();
-
-                var changed = new List<(string rel, byte[] data, string hash)>();
-                bool anyLocked = false;
-                foreach (var f in Directory.GetFiles(saveRoot, "*", SearchOption.AllDirectories))
+                for (int attempt = 0; attempt < 10; attempt++)
                 {
-                    string rel = Path.GetRelativePath(saveRoot, f);
-                    byte[] data = ReadShared(f, out string why);
-                    if (data == null)
-                    {
-                        // Copy the other files now, and try this one again shortly.
-                        anyLocked = true;
-                        if (lockWarned.Add(rel)) Warn($"Can't read {rel} yet ({why}); will keep retrying.");
-                        continue;
-                    }
-                    lockWarned.Remove(rel);
-                    string h = Convert.ToHexString(SHA256.HashData(data));
-                    if (lastHash.TryGetValue(rel, out var old) && old == h) continue;
-                    // Changed: make sure the game has finished writing it. Read again shortly
-                    // and only keep it if both reads match, so a half-written save is never kept.
-                    Thread.Sleep(StableMs);
-                    byte[] again = ReadShared(f, out _);
-                    if (again == null || Convert.ToHexString(SHA256.HashData(again)) != h)
-                    {
-                        anyLocked = true; // still being written; try again shortly
-                        continue;
-                    }
-                    changed.Add((rel, data, h));
+                    var changed = Collect(FastStableMs, tries: 1, out bool busy);
+                    if (changed.Count > 0) WriteZip(changed, reason);
+                    if (!busy) return;
                 }
-                if (anyLocked) debounce.Change(RetryMs, Timeout.Infinite);
-                if (changed.Count == 0) return;
+            }
+            catch (Exception e) { Error("Could not copy the save: " + e); }
+        });
+    }
 
-                // Name: time, then which story slots changed, e.g. "2026-11-27_18-45-16 SLOT_B.zip"
+    // Timer / change-notice path: only keeps files that read the same twice, so a save that is
+    // still being written is never kept.
+    static void Snapshot(string reason)
+    {
+        try
+        {
+            var changed = Collect(StableMs, tries: 5, out bool anyLocked);
+            if (anyLocked) debounce.Change(RetryMs, Timeout.Infinite);
+            if (changed.Count > 0) WriteZip(changed, reason);
+        }
+        catch (Exception e) { Error("Could not copy the save: " + e); }
+    }
+
+    // Reads every save file and returns the ones that differ from the last copy, marking them
+    // as copied so the other path doesn't copy the same state again.
+    static List<(string rel, byte[] data, string hash)> Collect(int stableMs, int tries, out bool anyLocked)
+    {
+        anyLocked = false;
+        lock (gate) { if (lastHash.Count == 0) LoadLastHashes(); }
+        var result = new List<(string rel, byte[] data, string hash)>();
+        foreach (var f in Directory.GetFiles(saveRoot, "*", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(saveRoot, f);
+            byte[] data = ReadShared(f, tries, out string why);
+            if (data == null)
+            {
+                anyLocked = true;
+                lock (gate) { if (lockWarned.Add(rel)) Warn($"Can't read {rel} yet ({why}); will keep retrying."); }
+                continue;
+            }
+            string h = Convert.ToHexString(SHA256.HashData(data));
+            lock (gate)
+            {
+                lockWarned.Remove(rel);
+                if (lastHash.TryGetValue(rel, out var old) && old == h) continue;
+            }
+            if (stableMs > 0)
+            {
+                Thread.Sleep(stableMs);
+                byte[] again = ReadShared(f, tries, out _);
+                if (again == null || Convert.ToHexString(SHA256.HashData(again)) != h) { anyLocked = true; continue; }
+            }
+            lock (gate)
+            {
+                if (lastHash.TryGetValue(rel, out var old) && old == h) continue; // the other path got it
+                lastHash[rel] = h;
+            }
+            result.Add((rel, data, h));
+        }
+        return result;
+    }
+
+    static readonly object writeGate = new();
+
+    // Name: time, then which story slots changed, e.g. "2026-11-27_18-45-16 SLOT_B.zip"
+    static void WriteZip(List<(string rel, byte[] data, string hash)> changed, string reason)
+    {
+        lock (writeGate)
+        {
+            try
+            {
                 var slots = changed.Select(c => Path.GetFileNameWithoutExtension(c.rel))
                                    .Where(n => n.StartsWith("SLOT_", StringComparison.OrdinalIgnoreCase)).ToList();
                 string label = slots.Count > 0 ? string.Join("+", slots) : "settings";
@@ -109,7 +151,7 @@ public static class Core
                 {
                     foreach (var c in changed)
                     {
-                        var e = zip.CreateEntry(c.rel.Replace('\\', '/'), CompressionLevel.Optimal);
+                        var e = zip.CreateEntry(c.rel.Replace(Path.DirectorySeparatorChar, '/'), CompressionLevel.Optimal);
                         using var s = e.Open();
                         s.Write(c.data, 0, c.data.Length);
                     }
@@ -120,10 +162,14 @@ public static class Core
                     foreach (var c in changed) w.WriteLine($"file={c.rel} sha256={c.hash}");
                 }
                 File.Move(tmp, path);
-                foreach (var c in changed) lastHash[c.rel] = c.hash;
                 Info($"Copied save ({reason}): {Path.GetFileName(path)}");
             }
-            catch (Exception e) { Error("Could not copy the save: " + e); }
+            catch (Exception e)
+            {
+                // Forget these so the next check copies them again.
+                lock (gate) foreach (var c in changed) if (lastHash.TryGetValue(c.rel, out var h) && h == c.hash) lastHash.Remove(c.rel);
+                Error("Could not copy the save: " + e);
+            }
         }
     }
 
@@ -150,10 +196,10 @@ public static class Core
         }
     }
 
-    static byte[] ReadShared(string f, out string why)
+    static byte[] ReadShared(string f, int tries, out string why)
     {
         why = null;
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < tries; i++)
         {
             try
             {
@@ -162,7 +208,7 @@ public static class Core
                 fs.CopyTo(ms);
                 return ms.ToArray();
             }
-            catch (IOException e) { why = e.Message; Thread.Sleep(500); }
+            catch (IOException e) { why = e.Message; if (i + 1 < tries) Thread.Sleep(500); }
         }
         return null;
     }
