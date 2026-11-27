@@ -19,8 +19,11 @@ public static class Core
     static Timer debounce;
     static readonly object gate = new();
     static readonly Dictionary<string, string> lastHash = new(StringComparer.OrdinalIgnoreCase);
-    const int QuietMs = 5000;  // wait until the game has stopped writing for this long
+    const int QuietMs = 2000;  // wait until the game has stopped writing for this long
     const int RetryMs = 15000; // a file the game still holds locked is tried again this often
+    const int PollMs = 15000;  // check for changes this often even without a change notice
+    const int StableMs = 1500; // a changed file must read the same twice this far apart
+    static Timer poll;
     static readonly HashSet<string> lockWarned = new(StringComparer.OrdinalIgnoreCase);
     public static string SaveRoot => saveRoot;
 
@@ -46,6 +49,10 @@ public static class Core
         watcher.Created += onChange;
         watcher.Renamed += (_, _) => debounce.Change(QuietMs, Timeout.Infinite);
         watcher.EnableRaisingEvents = true;
+
+        // Windows doesn't reliably report writes to a file the game keeps open (the slot you're
+        // playing), so also check every PollMs. Unchanged files cost one read and a hash.
+        poll = new Timer(_ => Snapshot("save"), null, PollMs, PollMs);
 
         Info($"Copying every save of {saveRoot} into {historyDir}");
     }
@@ -75,6 +82,15 @@ public static class Core
                     lockWarned.Remove(rel);
                     string h = Convert.ToHexString(SHA256.HashData(data));
                     if (lastHash.TryGetValue(rel, out var old) && old == h) continue;
+                    // Changed: make sure the game has finished writing it. Read again shortly
+                    // and only keep it if both reads match, so a half-written save is never kept.
+                    Thread.Sleep(StableMs);
+                    byte[] again = ReadShared(f, out _);
+                    if (again == null || Convert.ToHexString(SHA256.HashData(again)) != h)
+                    {
+                        anyLocked = true; // still being written; try again shortly
+                        continue;
+                    }
                     changed.Add((rel, data, h));
                 }
                 if (anyLocked) debounce.Change(RetryMs, Timeout.Infinite);
