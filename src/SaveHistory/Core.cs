@@ -19,7 +19,10 @@ public static class Core
     static Timer debounce;
     static readonly object gate = new();
     static readonly Dictionary<string, string> lastHash = new(StringComparer.OrdinalIgnoreCase);
-    const int QuietMs = 5000; // wait until the game has stopped writing for this long
+    const int QuietMs = 5000;  // wait until the game has stopped writing for this long
+    const int RetryMs = 15000; // a file the game still holds locked is tried again this often
+    static readonly HashSet<string> lockWarned = new(StringComparer.OrdinalIgnoreCase);
+    public static string SaveRoot => saveRoot;
 
     public static void Start(string saveFolder, string historyFolder, string toolSourceDir)
     {
@@ -57,15 +60,24 @@ public static class Core
                 if (lastHash.Count == 0) LoadLastHashes();
 
                 var changed = new List<(string rel, byte[] data, string hash)>();
+                bool anyLocked = false;
                 foreach (var f in Directory.GetFiles(saveRoot, "*", SearchOption.AllDirectories))
                 {
-                    byte[] data = ReadShared(f);
-                    if (data == null) { debounce.Change(QuietMs, Timeout.Infinite); return; } // still being written
                     string rel = Path.GetRelativePath(saveRoot, f);
+                    byte[] data = ReadShared(f, out string why);
+                    if (data == null)
+                    {
+                        // Copy the other files now, and try this one again shortly.
+                        anyLocked = true;
+                        if (lockWarned.Add(rel)) Warn($"Can't read {rel} yet ({why}); will keep retrying.");
+                        continue;
+                    }
+                    lockWarned.Remove(rel);
                     string h = Convert.ToHexString(SHA256.HashData(data));
                     if (lastHash.TryGetValue(rel, out var old) && old == h) continue;
                     changed.Add((rel, data, h));
                 }
+                if (anyLocked) debounce.Change(RetryMs, Timeout.Infinite);
                 if (changed.Count == 0) return;
 
                 // Name: time, then which story slots changed, e.g. "2026-11-27_18-45-16 SLOT_B.zip"
@@ -122,8 +134,9 @@ public static class Core
         }
     }
 
-    static byte[] ReadShared(string f)
+    static byte[] ReadShared(string f, out string why)
     {
+        why = null;
         for (int i = 0; i < 5; i++)
         {
             try
@@ -133,7 +146,7 @@ public static class Core
                 fs.CopyTo(ms);
                 return ms.ToArray();
             }
-            catch (IOException) { Thread.Sleep(500); }
+            catch (IOException e) { why = e.Message; Thread.Sleep(500); }
         }
         return null;
     }

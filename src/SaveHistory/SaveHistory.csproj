@@ -14,6 +14,9 @@
     <Reference Include="$(GameDir)\BepInEx\core\BepInEx.Core.dll" Private="false" />
     <Reference Include="$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll" Private="false" />
     <Reference Include="$(GameDir)\BepInEx\core\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(GameDir)\BepInEx\core\Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(GameDir)\BepInEx\core\0Harmony.dll" Private="false" />
+    <Reference Include="$(GameDir)\BepInEx\interop\Il2Cppmscorlib.dll" Private="false" />
     <!-- The restore tool ships next to the DLL; the plugin copies it into the save history folder. -->
     <RestoreTool Include="restore\*" />
     <None Include="@(RestoreTool)" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

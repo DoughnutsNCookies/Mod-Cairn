@@ -1,6 +1,7 @@
 using System.IO;
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
 
 namespace SaveHistory;
 
@@ -10,7 +11,7 @@ namespace SaveHistory;
 [BepInPlugin("schuah.cairn.savehistory", "SaveHistory", Version)]
 public class Plugin : BasePlugin
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
 
     public override void Load()
     {
@@ -20,6 +21,8 @@ public class Plugin : BasePlugin
         string games = Path.Combine(Core.SavedGamesFolder(), "TheGameBakers");
         Core.Start(Path.Combine(games, "Cairn_RETAIL"), Path.Combine(games, "Cairn_SaveHistory"),
                    Path.GetDirectoryName(typeof(Plugin).Assembly.Location));
+        try { ShareSaves.Install(new Harmony("schuah.cairn.savehistory")); }
+        catch (System.Exception e) { Log.LogError("Read-sharing patch failed; the slot you're playing is copied only after it closes: " + e); }
         Log.LogInfo($"SaveHistory {Version} loaded");
     }
 }
