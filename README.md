@@ -12,7 +12,7 @@ Cairn keeps one save per slot and overwrites it as you play. The second plugin i
 
 - Copies go to `%USERPROFILE%\Saved Games\TheGameBakers\Cairn_SaveHistory`, one zip each, named by time and slot (for example `2026-11-27_18-45-16 SLOT_B.zip`).
 - It keeps every copy and never deletes any. A copy is about 2.5 MB, and Cairn saves every few minutes, so that's roughly 40 MB per hour of play. Delete old zips by hand if the folder gets too big.
-- It doesn't touch the game's code. It only watches the save folder.
+- How it catches every save: Cairn keeps the slot you're playing open and locked until you quit. So SaveHistory hooks two of the game's functions. When the game opens a slot file for writing, it opens it so that other programs may read it too, which leaves the game's own access unchanged. And it copies the slot the moment the game finishes a save. A check every 15 seconds catches anything else, and a copy is only kept once the file has stopped changing.
 
 **To go back:** close Cairn, open the `Cairn_SaveHistory` folder and double-click `Restore Cairn Save.cmd`. Pick a copy from the list (newest first) and confirm. Your current save is copied first, as "before restore", so you can undo a restore from the same list.
 
