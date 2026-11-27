@@ -14,7 +14,11 @@ Cairn keeps one save per slot and overwrites it as you play. The second plugin i
 - It keeps every copy and never deletes any. A copy is about 2.5 MB, and Cairn saves every few minutes, so that's roughly 40 MB per hour of play. Delete old zips by hand if the folder gets too big.
 - How it catches every save: Cairn keeps the slot you're playing open and locked until you quit. So SaveHistory hooks two of the game's functions. When the game opens a slot file for writing, it opens it so that other programs may read it too, which leaves the game's own access unchanged. And it copies the slot the moment the game finishes a save. A check every 15 seconds catches anything else, and a copy is only kept once the file has stopped changing.
 
-**To go back:** close Cairn, open the `Cairn_SaveHistory` folder and double-click `Restore Cairn Save.cmd`. Pick a copy from the list (newest first) and confirm. Your current save is copied first, as "before restore", so you can undo a restore from the same list.
+**Recent saves in the game's own menu:** after each save, SaveHistory also puts a copy into a free slot of Cairn's save menu, with the game's usual preview. Cairn reads 12 slots (A to L), so the menu holds the slot you're playing plus your 11 newest saves. When it's full, the oldest copy is replaced. SaveHistory only ever replaces a copy it made itself, and only while that copy is untouched: load a copy and keep playing, and it becomes a real save that's never replaced. It never writes the slot you're playing. Use the game's own Erase to remove copies you don't want.
+
+**Older saves:** close Cairn, open the `Cairn_SaveHistory` folder and double-click `Restore Cairn Save.cmd`. Pick a copy from the list (newest first), then choose:
+- **Yes: add it to the game menu** as a new slot. Nothing is replaced, and slots added this way are never rotated out.
+- **No: put it back into its own slot.** Your current save is copied first, as "before restore", so this can be undone from the same list.
 
 ## Your save is left alone
 

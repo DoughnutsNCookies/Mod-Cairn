@@ -1,7 +1,13 @@
 # Restore a Cairn save from the copies SaveHistory made.
 # Double-click "Restore Cairn Save.cmd" next to this file. Pick a copy in the list and click OK.
-# Your current save is copied first ("before restore"), so a restore can always be undone.
-param([string]$Pick)  # optional: a snapshot file name, to restore without the picker window
+# Two choices after picking:
+#   Replace - put the save back into its own slot. Your current save is copied first
+#             ("before restore"), so this can always be undone.
+#   Add     - add the save to the game's menu as a new slot (A-L). Nothing is replaced.
+param(
+    [string]$Pick,                          # optional: a snapshot file name, to skip the picker window
+    [ValidateSet('', 'Replace', 'Add')][string]$Mode = ''
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem, System.Windows.Forms
@@ -59,16 +65,42 @@ if ($Pick) { $choice = $rows | Where-Object File -eq $Pick | Select-Object -Firs
 else { $choice = $rows | Out-GridView -Title 'Pick the save to go back to (newest first), then click OK' -OutputMode Single }
 if (-not $choice) { exit 0 }
 
-if (-not $Pick) {
-    $ok = Show-Box ("Go back to this save?`n`n  $($choice.Slot)   $($choice.When)`n`n" +
-        "Your current save is copied first, so you can undo this from the same list.") 'YesNo' 'Question'
-    if ($ok -ne 'Yes') { exit 0 }
+if (-not $Mode) {
+    $ans = Show-Box ("$($choice.Slot)   $($choice.When)`n`n" +
+        "Yes = add it to the game menu as a new slot (nothing is replaced)`n" +
+        "No = put it back into slot $($choice.Slot), replacing what is there now (your current save is copied first)`n" +
+        "Cancel = do nothing") 'YesNoCancel' 'Question'
+    if ($ans -eq 'Yes') { $Mode = 'Add' } elseif ($ans -eq 'No') { $Mode = 'Replace' } else { exit 0 }
+}
+
+$slotPattern = '(^|/)SLOT_[^/]*\.CPK$'
+
+if ($Mode -eq 'Add') {
+    $story = Join-Path $saveRoot 'SAVEGAMES\RETAIL\STORY'
+    $zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $history $choice.File))
+    $added = @()
+    try {
+        foreach ($e in $zip.Entries | Where-Object { $_.FullName -match $slotPattern }) {
+            $free = 'ABCDEFGHIJKL'.ToCharArray() | Where-Object { -not (Test-Path (Join-Path $story "SLOT_$_.CPK")) } | Select-Object -First 1
+            if (-not $free) {
+                if (-not $Pick) { Show-Box "All 12 slots in the game menu are in use. Erase one in the game first, then try again." 'OK' 'Warning' | Out-Null }
+                Write-Output "Menu full"; exit 1
+            }
+            $dest = Join-Path $story "SLOT_$free.CPK"
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, "$dest.restoring", $false)
+            Move-Item -LiteralPath "$dest.restoring" -Destination $dest
+            $added += "slot $free"
+        }
+    } finally { $zip.Dispose() }
+    if (-not $Pick) { Show-Box ("Done. The save from $($choice.When) is now in the game menu as $($added -join ', ').") | Out-Null }
+    Write-Output "Added $($choice.File) to the menu as $($added -join ', ')"
+    exit 0
 }
 
 # 1. Safety copy of everything on disk now.
 $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
 $slots = @(Get-ChildItem $saveRoot -Recurse -File | Where-Object Name -like 'SLOT_*.CPK')
-$label = ($slots | ForEach-Object BaseName) -join '+'
+$label = if ($slots.Count -gt 3) { "$($slots.Count) slots" } else { ($slots | ForEach-Object BaseName) -join '+' }
 $safety = Join-Path $history "$stamp $label before restore.zip"
 $zip = [System.IO.Compression.ZipFile]::Open($safety, 'Create')
 try {
@@ -85,7 +117,7 @@ try {
 # 2. Put the chosen slot file(s) back.
 $zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $history $choice.File))
 try {
-    foreach ($e in $zip.Entries | Where-Object { $_.FullName -match '(^|/)SLOT_[^/]*\.CPK$' }) {
+    foreach ($e in $zip.Entries | Where-Object { $_.FullName -match $slotPattern }) {
         $dest = Join-Path $saveRoot ($e.FullName.Replace('/', '\'))
         $tmp = "$dest.restoring"
         [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $tmp, $true)

@@ -11,7 +11,7 @@ namespace SaveHistory;
 [BepInPlugin("schuah.cairn.savehistory", "SaveHistory", Version)]
 public class Plugin : BasePlugin
 {
-    public const string Version = "1.1.3";
+    public const string Version = "1.2.0";
 
     public override void Load()
     {

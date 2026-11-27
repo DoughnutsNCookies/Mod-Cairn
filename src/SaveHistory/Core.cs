@@ -27,6 +27,11 @@ public static class Core
     static Timer poll;
     static readonly HashSet<string> lockWarned = new(StringComparer.OrdinalIgnoreCase);
     public static string SaveRoot => saveRoot;
+    public static string HistoryDir => historyDir;
+
+    // Lets MenuSlots mark a slot file it just wrote as already copied, so that file is not
+    // zipped again or copied on to yet another slot.
+    internal static void MarkCopied(string rel, string hash) { lock (gate) lastHash[rel] = hash; }
 
     public static void Start(string saveFolder, string historyFolder, string toolSourceDir)
     {
@@ -70,7 +75,7 @@ public static class Core
                 for (int attempt = 0; attempt < 10; attempt++)
                 {
                     var changed = Collect(FastStableMs, tries: 1, out bool busy);
-                    if (changed.Count > 0) WriteZip(changed, reason);
+                    if (changed.Count > 0) { WriteZip(changed, reason); MenuSlots.CopyToMenu(changed); }
                     if (!busy) return;
                 }
             }
@@ -86,7 +91,11 @@ public static class Core
         {
             var changed = Collect(StableMs, tries: 5, out bool anyLocked);
             if (anyLocked) debounce.Change(RetryMs, Timeout.Infinite);
-            if (changed.Count > 0) WriteZip(changed, reason);
+            if (changed.Count > 0)
+            {
+                WriteZip(changed, reason);
+                if (reason == "save") MenuSlots.CopyToMenu(changed);
+            }
         }
         catch (Exception e) { Error("Could not copy the save: " + e); }
     }
@@ -141,7 +150,7 @@ public static class Core
             {
                 var slots = changed.Select(c => Path.GetFileNameWithoutExtension(c.rel))
                                    .Where(n => n.StartsWith("SLOT_", StringComparison.OrdinalIgnoreCase)).ToList();
-                string label = slots.Count > 0 ? string.Join("+", slots) : "settings";
+                string label = slots.Count == 0 ? "settings" : slots.Count > 3 ? $"{slots.Count} slots" : string.Join("+", slots);
                 string name = $"{DateTime.Now:yyyy-MM-dd_HH-mm-ss} {label}";
                 string path = Path.Combine(historyDir, name + ".zip");
                 for (int i = 2; File.Exists(path); i++) path = Path.Combine(historyDir, $"{name} ({i}).zip");
