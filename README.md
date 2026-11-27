@@ -6,6 +6,16 @@ It doesn't add an overlay. It changes the game's answer to "does the player know
 
 > **Status: v1.0.0.** Tested on Cairn 1.1.593 (Windows): the cookpot preview shows dishes you've never cooked.
 
+## SaveHistory: rewind your save
+
+Cairn keeps one save per slot and overwrites it as you play. The second plugin in this repo, **SaveHistory**, keeps a copy of every save the game writes, plus one when the game starts, so you can go back to any earlier point.
+
+- Copies go to `%USERPROFILE%\Saved Games\TheGameBakers\Cairn_SaveHistory`, one zip each, named by time and slot (for example `2026-11-27_18-45-16 SLOT_B.zip`).
+- It keeps every copy and never deletes any. A copy is about 2.5 MB, and Cairn saves every few minutes, so that's roughly 40 MB per hour of play. Delete old zips by hand if the folder gets too big.
+- It doesn't touch the game's code. It only watches the save folder.
+
+**To go back:** close Cairn, open the `Cairn_SaveHistory` folder and double-click `Restore Cairn Save.cmd`. Pick a copy from the list (newest first) and confirm. Your current save is copied first, as "before restore", so you can undo a restore from the same list.
+
 ## Your save is left alone
 
 The reveal applies only while the game is *displaying* recipes. While the game records a new discovery, cooks, or saves or loads your recipe file, the mod gives the real answer. Your save keeps its true list of discovered recipes, and cooking something new should still count as a discovery.
@@ -21,7 +31,9 @@ Find the game folder, the one with `Cairn.exe`. On Steam: right-click Cairn > Ma
 2. Extract it into the game folder, so `winhttp.dll` and the `BepInEx` folder sit next to `Cairn.exe`.
 3. Start the game. The first launch takes a minute or two longer while BepInEx sets itself up.
 
-**Already have BepInEx 6 (IL2CPP)?** Download `RecipeReveal-vX.Y.Z-plugin-only.zip` and extract it into the game folder. It only adds `BepInEx\plugins\RecipeReveal\RecipeReveal.dll`.
+**Already have BepInEx 6 (IL2CPP)?** Download `RecipeReveal-vX.Y.Z-plugin-only.zip` and extract it into the game folder. It only adds `BepInEx\plugins\RecipeReveal` and `BepInEx\plugins\SaveHistory`.
+
+Each plugin works on its own. Delete either folder if you only want one of them.
 
 The mod needs **BepInEx 6 bleeding edge, IL2CPP x64** (tested with `6.0.0-be.793`). BepInEx 5 and the Mono builds won't work.
 
